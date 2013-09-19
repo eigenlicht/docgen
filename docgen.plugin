@@ -1,0 +1,8 @@
+{
+  "module": "docgen",
+  "class": "DocGen",
+  "authors": "eigenlicht <eigenlicht@autistici.org>",
+  "version": "0.1",
+  "url": "http://ninja-ide.org",
+  "description": "Generates docstring templates (currently for Sphinx only)."
+}

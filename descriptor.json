@@ -1,0 +1,1 @@
+[{"plugin-descriptor": "docgen.plugin", "name": "DocGen", "version": "0.1", "authors": "eigenlicht", "download": "http://example.com/", "home": "/plugins/50/", "description": "Generates docstring templates (currently for Sphinx only)."}]
