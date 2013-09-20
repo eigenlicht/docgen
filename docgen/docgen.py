@@ -8,7 +8,7 @@ try:
 except ImportError:
     import simplejson as json
 
-from PyQt4.QtGui import QMessageBox, QAction
+from PyQt4.QtGui import QMessageBox, QAction, QKeySequence
 from PyQt4.QtCore import Qt
 
 from ninja_ide.core import plugin
@@ -55,26 +55,11 @@ class DocGen(plugin.Plugin):
         self.explorer_s.set_project_type_handler(PROJECT_TYPE,
                 GenSphinxDocHandler(self.locator))
 
-        self.editor_s.editorKeyPressEvent.connect(self._handle_keypress)
-
         action = QAction("Generate Docstring", self)
         action.triggered.connect(self.gen_sphinx_doc)
+        action.setShortcut(QKeySequence("F8"))
 
         self.menu_s.add_action(action)
-
-    def _handle_keypress(self, event):
-        #keyMod = event.modifiers()
-
-        #is_SHIFT = keyMod & Qt.ShiftModifier
-        #is_CTRL = keyMod & Qt.ControlModifier
-
-        #self.editor_s.insert_text(repr(event.key()))
-
-        #is_shortcut = (is_SHIFT and is_CTRL and event.key() == QtCore.Qt.Key_P)
-        #is_shortcut = (is_CTRL and event.key() == Qt.Key_Return)
-        is_shortcut = (event.key() == Qt.Key_F8)
-        if is_shortcut:
-            self.gen_sphinx_doc()
 
     def gen_sphinx_doc(self):
         editor = self.editor_s.get_editor()
