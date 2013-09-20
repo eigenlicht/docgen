@@ -2,6 +2,7 @@
 
 import os
 import re
+import ast
 try:
     import json
 except ImportError:
@@ -23,7 +24,8 @@ PROJECT_TYPE = "NINJA-Plugin-Project"
 class Docstring(list):
     def __init__(self, indent=0):
         super(Docstring, self).__init__()
-        self.prefix = " " * indent
+        self._default_indent = " " * indent
+        self.prefix = self._default_indent
 
     def append(self, item):
         super(Docstring, self).append(self.prefix + item + '\n')
@@ -31,11 +33,17 @@ class Docstring(list):
     def append_newline(self):
         super(Docstring, self).append('\n')
 
+    def indent(self):
+        self.prefix = " " * (len(self.prefix) + 4)
+
+    def unindent(self):
+        self.prefix = " " * (len(self.prefix) - 4)
+
     def __str__(self):
-        return "{0}\n{1}{0}".format(self.prefix + "'''", "".join(self))
+        return "{0}\n{1}{0}".format(self._default_indent + "'''", "".join(self))
 
 #TODO: configuration
-#TODO: definitions with newlines
+#TODO: definitions with newlines and strings such as "def f(line):"
 class DocGen(plugin.Plugin):
     def initialize(self):
         global PROJECT_TYPE
@@ -74,20 +82,19 @@ class DocGen(plugin.Plugin):
 
         # get indices for current line
         pos = editor.get_cursor_position()
-        end = text[pos:].find('\n') + pos
-        start = text[:end].rfind('\n') + 1
-        cur_line = text[start:end]
+        start = text[:pos].rfind('\n') + 1
+        end = text[start:].find('\n') + start
 
-        # Look! Up in the editor's content!
-        # It's a function!
-        if re.match(r'\s*def\s+\w+\(.*\)\s*:', cur_line): # . matches everything except newline
-            doc = self._sphinx_function(cur_line)
-        # It's a class!
-        elif re.match(r'\s*class\s+\w+\(.*\)\s*:', cur_line):
-            doc = self._sphinx_class(cur_line)
-        # It's Superm...a module!
-        elif cur_line == "":
+        # . matches everything except newline
+        fn  = re.match(r'\s*def\s+\w+\(.*\)\s*:', text[start:])
+        cls = re.match(r'\s*class\s+\w+\(.*\)\s*:', text[start:])
+
+        if start == end: # empty line - assume module doc
             doc = self._sphinx_module()
+        elif fn:
+            doc = self._sphinx_function(fn.group())
+        elif cls:
+            doc = self._sphinx_class(cls.group())
         else:
             return # do nothing
 
@@ -100,15 +107,23 @@ class DocGen(plugin.Plugin):
         doc.append('.. codeauthor:: Firstname Lastname <firstname@example.com>')
         doc.append_newline()
 
-        params = line[line.find('(')+1:line.rfind(')')].split(',')
+        #doc.append('..rst-class: toggle')
+        #doc.append_newline()
+        #doc.indent()
+
         old_len = len(doc)
-        for p in params:
-            if p == 'self' or p.strip() == '': continue
-            p = p.split('=')[0].strip() # handle keyword args
-            doc.append(':param %s: ' % p)
-            doc.append(':type %s: ' % p)
+
+        # remove indenation and add 'pass' to make 'def <name>(<...>):'
+        # a valid Python expression for the syntax parser
+        args = ast.parse(line.strip() + 'pass').body[0].args.args
+
+        for arg in (a.id for a in args): # args is a list of _ast.Name objects)
+            if arg == 'self': continue
+            doc.append(':param %s: ' % arg)
+            doc.append(':type %s: ' % arg)
 
         if len(doc) > old_len: doc.append_newline()
+
         doc.append(':returns: ')
         doc.append_newline()
         doc.append(':raise: ')
