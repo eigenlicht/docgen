@@ -34,10 +34,10 @@ class Docstring(list):
         super(Docstring, self).append('\n')
 
     def indent(self):
-        self.prefix = " " * (len(self.prefix) + 4)
+        self.prefix += " " * 4
 
     def unindent(self):
-        self.prefix = " " * (len(self.prefix) - 4)
+        self.prefix = self.prefix[4:]
 
     def __str__(self):
         return "{0}\n{1}{0}".format(self._default_indent + "'''", "".join(self))
