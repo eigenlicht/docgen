@@ -3,6 +3,14 @@ docgen
 
 NINJA IDE Plugin to generate docstring templates.
 
+Configuring DocGen
+------------------
+
+Create your own docstring templates in the settings.
+The DocGen special directives are:
+
+* :params: [:types:] - will parse the function header for the arguments and add ':param arg1:' for each argument to the docstring. If you have ':types:' written in the same line as the :params: directive, it will also add ':type arg1:' for each argument.
+
 Known Issues
 ------------
 
