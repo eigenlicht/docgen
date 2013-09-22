@@ -8,7 +8,7 @@ try:
 except ImportError:
     import simplejson as json
 
-from PyQt4.QtGui import QMessageBox, QAction, QKeySequence
+from PyQt4 import QtGui
 from PyQt4.QtCore import Qt
 
 from ninja_ide.core import plugin
@@ -43,7 +43,6 @@ class Docstring(list):
         return "{0}\n{1}{0}".format(self._default_indent + "'''", "".join(self))
 
 #TODO: configuration
-#TODO: definitions with newlines and strings such as "def f(line):"
 class DocGen(plugin.Plugin):
     def initialize(self):
         global PROJECT_TYPE
@@ -51,15 +50,29 @@ class DocGen(plugin.Plugin):
         self.editor_s = self.locator.get_service('editor')
         self.menu_s = self.locator.get_service('menuApp')
 
-        # Set a project handler for NINJA-IDE Plugin
+        # set a project handler for NINJA-IDE Plugin
         self.explorer_s.set_project_type_handler(PROJECT_TYPE,
                 GenSphinxDocHandler(self.locator))
 
-        action = QAction("Generate Docstring", self)
-        action.triggered.connect(self.gen_sphinx_doc)
-        action.setShortcut(QKeySequence("F8"))
+        # get settings from file
+        #TODO: create and read from config
 
-        self.menu_s.add_action(action)
+        # create settings window
+        settings_win = SettingsWindow(None) # give ide window as parent
+
+        # add menu entries
+        #TODO: implement as menu
+        settings = QtGui.QAction("DocGen Settings", self)
+        settings.triggered.connect(settings_win.show)
+
+        gen_doc = QtGui.QAction("Generate Docstring", self)
+        gen_doc.triggered.connect(self.gen_sphinx_doc)
+        gen_doc.setShortcut(QtGui.QKeySequence("F8"))
+
+        #menu.addAction(action)
+
+        self.menu_s.add_action(gen_doc)
+        self.menu_s.add_action(settings)
 
     def gen_sphinx_doc(self):
         editor = self.editor_s.get_editor()
@@ -70,23 +83,48 @@ class DocGen(plugin.Plugin):
         start = text[:pos].rfind('\n') + 1
         end = text[start:].find('\n') + start
 
-        # . matches everything except newline
-        fn  = re.match(r'\s*def\s+\w+\(.*\)\s*:', text[start:])
-        cls = re.match(r'\s*class\s+\w+\(.*\)\s*:', text[start:])
+        # create regex and its helper
+        regex = (r'\s*KEYWORD\s+\w+\(.*?\)\s*:',
+                 r'\s*KEYWORD\s+\w+\(.*?\)\s*:\s*#docgen-end')
+
+        cls_regex = [r.replace('KEYWORD', 'class') for r in regex]
+        fnc_regex = [r.replace('KEYWORD', 'def') for r in regex]
+
+        def match(regex, text):
+            r = re.match(regex, text, re.DOTALL)
+            return r.group() if r else ''
+
+        # try to find out what kind of docstring the user wants
+        fnc = match(fnc_regex[0], text[start:])
+        cls = match(cls_regex[0], text[start:])
 
         if start == end: # empty line - assume module doc
             doc = self._sphinx_module()
-        elif fn:
-            doc = self._sphinx_function(fn.group())
+        elif fnc:
+            try:
+                doc = self._sphinx_function(fnc)
+            except SyntaxError: # header might contain "):" - try second regex
+                fnc = match(fnc_regex[1], text[start:])
+                doc = self._sphinx_function(fnc) if fnc else None
         elif cls:
-            doc = self._sphinx_class(cls.group())
+            try:
+                doc = self._sphinx_class(cls)
+            except SyntaxError:
+                cls = match(cls_regex[1], text[start:])
+                doc = self._sphinx_class(cls) if cls else None
         else:
             return # do nothing
 
-        editor.set_cursor_position(end) # set cursor to end of line
-        self.editor_s.insert_text('\n' + str(doc))
+        if doc:
+            end = start + len(fnc) + len(cls)
+            editor.set_cursor_position(end) # set cursor to end of line
+            self.editor_s.insert_text('\n' + str(doc))
 
     def _sphinx_function(self, line):
+        # remove indenation and add 'pass' to make 'def <name>(<...>):'
+        # a valid Python expression for the syntax parser
+        args = ast.parse(line.strip() + '\n    pass').body[0].args.args
+
         doc = Docstring(indent=line.find('def') + 4)
 
         doc.append('.. codeauthor:: Firstname Lastname <firstname@example.com>')
@@ -97,10 +135,6 @@ class DocGen(plugin.Plugin):
         #doc.indent()
 
         old_len = len(doc)
-
-        # remove indenation and add 'pass' to make 'def <name>(<...>):'
-        # a valid Python expression for the syntax parser
-        args = ast.parse(line.strip() + 'pass').body[0].args.args
 
         for arg in (a.id for a in args): # args is a list of _ast.Name objects)
             if arg == 'self': continue
@@ -118,6 +152,9 @@ class DocGen(plugin.Plugin):
     def _sphinx_class(self, line):
         doc = Docstring(indent=line.find('class') + 4)
 
+        # verify what we consider the class header
+        ast.parse(line.strip() + '\n    pass')
+
         doc.append('.. codeauthor:: Firstname Lastname <firstname@example.com>')
 
         return doc
@@ -133,6 +170,15 @@ class DocGen(plugin.Plugin):
 
         return doc
 
+#TODO: implement SettingsWindow
+class SettingsWindow(QtGui.QDialog):
+    def __init__(self, parent):
+        QtGui.QDialog.__init__(self, parent)
+
+        self.parent = parent
+
+        self.setMinimumSize(320, 240)
+        self.setWindowTitle('DocGen - Settings')
 
 class GenSphinxDocHandler(plugin_interfaces.IProjectTypeHandler):
 
@@ -154,7 +200,7 @@ class GenSphinxDocHandler(plugin_interfaces.IProjectTypeHandler):
         page = wizard.page(ids[2])
         path = unicode(page.txtPlace.text())
         if not path:
-            QMessageBox.critical(self, self.tr("Incorrect Location"),
+            QtGui.QMessageBox.critical(self, self.tr("Incorrect Location"),
                 self.tr("The project couldn\'t be create"))
             return
         project = {}
