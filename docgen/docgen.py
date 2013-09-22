@@ -3,6 +3,7 @@
 import os
 import re
 import ast
+import ConfigParser
 try:
     import json
 except ImportError:
@@ -42,7 +43,8 @@ class Docstring(list):
     def __str__(self):
         return "{0}\n{1}{0}".format(self._default_indent + "'''", "".join(self))
 
-#TODO: configuration
+#TODO: make config stuff more error safe (e.g. text with '\\n')
+#TODO: independence from Sphinx
 class DocGen(plugin.Plugin):
     def initialize(self):
         global PROJECT_TYPE
@@ -52,18 +54,19 @@ class DocGen(plugin.Plugin):
 
         # set a project handler for NINJA-IDE Plugin
         self.explorer_s.set_project_type_handler(PROJECT_TYPE,
-                GenSphinxDocHandler(self.locator))
+                DocGenHandler(self.locator))
 
         # get settings from file
-        #TODO: create and read from config
+        self.config, self.config_path = self._get_config()
 
         # create settings window
-        settings_win = SettingsWindow(None) # give ide window as parent
+        #FIXME: give ide window as parent
+        self.settings_win = SettingsWindow(None, self.config, self.config_path)
 
         # add menu entries
-        #TODO: implement as menu
+        #FIXME: implement as menu
         settings = QtGui.QAction("DocGen Settings", self)
-        settings.triggered.connect(settings_win.show)
+        settings.triggered.connect(self.settings_win.show)
 
         gen_doc = QtGui.QAction("Generate Docstring", self)
         gen_doc.triggered.connect(self.gen_sphinx_doc)
@@ -116,7 +119,7 @@ class DocGen(plugin.Plugin):
             return # do nothing
 
         if doc:
-            end = start + len(fnc) + len(cls)
+            end = start + len(fnc) + len(cls) if start != end else end
             editor.set_cursor_position(end) # set cursor to end of line
             self.editor_s.insert_text('\n' + str(doc))
 
@@ -127,60 +130,135 @@ class DocGen(plugin.Plugin):
 
         doc = Docstring(indent=line.find('def') + 4)
 
-        doc.append('.. codeauthor:: Firstname Lastname <firstname@example.com>')
-        doc.append_newline()
+        for line in self.config.get('Sphinx', 'fnc').split('\n'):
+            if line == '.':
+                doc.append_newline()
+            elif ':params:' in line:
+                types = ':types:' in line
 
-        #doc.append('..rst-class: toggle')
-        #doc.append_newline()
-        #doc.indent()
-
-        old_len = len(doc)
-
-        for arg in (a.id for a in args): # args is a list of _ast.Name objects)
-            if arg == 'self': continue
-            doc.append(':param %s: ' % arg)
-            doc.append(':type %s: ' % arg)
-
-        if len(doc) > old_len: doc.append_newline()
-
-        doc.append(':returns: ')
-        doc.append_newline()
-        doc.append(':raise: ')
+                # args is a list of _ast.Name objects)
+                for arg in (a.id for a in args):
+                    if arg == 'self': continue
+                    doc.append(':param %s: ' % arg)
+                    if types: doc.append(':type %s: ' % arg)
+            else:
+                doc.append(line)
 
         return doc
 
     def _sphinx_class(self, line):
-        doc = Docstring(indent=line.find('class') + 4)
-
         # verify what we consider the class header
         ast.parse(line.strip() + '\n    pass')
 
-        doc.append('.. codeauthor:: Firstname Lastname <firstname@example.com>')
+        doc = Docstring(indent=line.find('class') + 4)
+
+        for line in self.config.get('Sphinx', 'cls').split('\n'):
+            if line == '.': doc.append_newline()
+            else: doc.append(line)
 
         return doc
 
     def _sphinx_module(self):
         doc = Docstring()
 
-        doc.append('Created on <date>')
-        doc.append_newline()
-        doc.append('.. moduleauthor:: Firstname Lastname <firstname@example.com>')
-        doc.append_newline()
-        doc.append(':synopsis:')
+        for line in self.config.get('Sphinx', 'mod').split('\n'):
+            if line == '.': doc.append_newline()
+            else: doc.append(line)
 
         return doc
 
-#TODO: implement SettingsWindow
+    def _get_config(self, path='~/.ninja_ide/addins/plugins/docgen/config'):
+        path = os.path.expanduser(path)
+        config = ConfigParser.ConfigParser()
+
+        if not os.path.isfile(path):
+            config.add_section('Sphinx')
+
+            #FIXME: ugly hack: usage of '.' for empty lines
+            #FIXME: otherwhise configparser ignores them
+            config.set('Sphinx', 'mod',
+            'Created on <date>\n.\n' +
+            '.. moduleauthor:: Firstname Lastname <firstname@example.com>\n.\n' +
+            ':synopsis:')
+
+            config.set('Sphinx', 'cls',
+                '.. codeauthor:: Firstname Lastname <firstname@example.com>')
+
+            config.set('Sphinx', 'fnc',
+            '.. codeauthor:: Firstname Lastname <firstname@example.com>\n.\n' +
+            ':params: :types:\n.\n' +
+            ':returns:\n.\n' +
+            ':raise:')
+
+            config.write(open(path, 'w'))
+        else:
+            config.readfp(open(path))
+
+        return config, path
+
+
 class SettingsWindow(QtGui.QDialog):
-    def __init__(self, parent):
+    def __init__(self, parent, config, path):
         QtGui.QDialog.__init__(self, parent)
 
         self.parent = parent
+        self.config = config
+        self.config_path = path
 
-        self.setMinimumSize(320, 240)
+        # set window properties
+        self.resize(550, 600)
+        self.setMinimumSize(320, 400)
         self.setWindowTitle('DocGen - Settings')
 
-class GenSphinxDocHandler(plugin_interfaces.IProjectTypeHandler):
+        # create TextEdits for each template
+        self.mod_l = QtGui.QLabel("Module Template:")
+        self.mod = QtGui.QTextEdit(self)
+        self.mod.setLineWrapMode(QtGui.QTextEdit.NoWrap)
+
+        self.cls_l = QtGui.QLabel("Class Template:")
+        self.cls = QtGui.QTextEdit(self)
+        self.cls.setLineWrapMode(QtGui.QTextEdit.NoWrap)
+
+        self.fnc_l = QtGui.QLabel("Function Template:")
+        self.fnc = QtGui.QTextEdit(self)
+        self.fnc.setLineWrapMode(QtGui.QTextEdit.NoWrap)
+
+        # button to write config to file
+        self.but_save = QtGui.QPushButton('Save', self)
+        self.but_save.clicked.connect(self._write_config)
+
+        # create layout
+        vbox = QtGui.QVBoxLayout(self)
+
+        vbox.addWidget(self.mod_l)
+        vbox.addWidget(self.mod)
+        vbox.addWidget(self.cls_l)
+        vbox.addWidget(self.cls)
+        vbox.addWidget(self.fnc_l)
+        vbox.addWidget(self.fnc)
+        vbox.addWidget(self.but_save)
+
+        self.setLayout(vbox)
+
+        # read current config
+        self.mod.setText(config.get('Sphinx', 'mod').replace('\n.\n', '\n\n'))
+        self.cls.setText(config.get('Sphinx', 'cls').replace('\n.\n', '\n\n'))
+        self.fnc.setText(config.get('Sphinx', 'fnc').replace('\n.\n', '\n\n'))
+
+    def _write_config(self):
+        # set global config to new values
+        self.config.set('Sphinx', 'mod',
+            self.mod.toPlainText().replace('\n\n', '\n.\n'))
+        self.config.set('Sphinx', 'cls',
+            self.cls.toPlainText().replace('\n\n', '\n.\n'))
+        self.config.set('Sphinx', 'fnc',
+            self.fnc.toPlainText().replace('\n\n', '\n.\n'))
+
+        # write new config to file
+        self.config.write(open(self.config_path, 'w'))
+
+
+class DocGenHandler(plugin_interfaces.IProjectTypeHandler):
 
     EXT = '.plugin'
 
