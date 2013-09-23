@@ -38,7 +38,6 @@ class Docstring(list):
 
 #TODO: make config stuff more error safe (e.g. text with '\\n', keybinding)
 #TODO: allow user to create several templates with certain type (e.g. sphinx)
-#TODO: bring new settings to settings window
 class DocGen(plugin.Plugin):
     def initialize(self):
         global PROJECT_TYPE
@@ -51,9 +50,11 @@ class DocGen(plugin.Plugin):
                 DocGenHandler(self.locator))
 
         # get settings from file
-        self.config, self.config_path = self._get_config()
-        self.doc_type = self.config.get('general', 'doc_type')
-        self.keybinding = self.config.get('general', 'keybinding')
+        self.config = None
+        self.config_path = None
+        self.doc_type = None
+        self.keybinding = None
+        self._update_config()
 
         # create settings window
         #FIXME: give ide window as parent
@@ -74,6 +75,9 @@ class DocGen(plugin.Plugin):
         self.menu_s.add_action(settings)
 
     def generate_doc(self):
+        # make sure we have current config
+        self._update_config()
+
         editor = self.editor_s.get_editor()
         text = editor.get_text()
 
@@ -175,8 +179,11 @@ class DocGen(plugin.Plugin):
     def _get_config(self, path='~/.ninja_ide/addins/plugins/docgen/config'):
         path = os.path.expanduser(path)
         config = ConfigParser.ConfigParser()
+        config_file = None
 
         if not os.path.isfile(path):
+            config_file = open(path, 'w')
+
             config.add_section('general')
             config.set('general', 'doc_type', 'sphinx')
             config.set('general', 'keybinding', 'F8')
@@ -203,11 +210,18 @@ class DocGen(plugin.Plugin):
             ':returns:\n.\n' +
             ':raise:')
 
-            config.write(open(path, 'w'))
+            config.write(config_file)
         else:
-            config.readfp(open(path))
+            config_file = open(path, 'r')
+            config.readfp(config_file)
 
+        config_file.close()
         return config, path
+
+    def _update_config(self):
+        self.config, self.config_path = self._get_config()
+        self.doc_type = self.config.get('general', 'doc_type')
+        self.keybinding = self.config.get('general', 'keybinding')
 
 
 class SettingsWindow(QtGui.QDialog):
@@ -219,11 +233,91 @@ class SettingsWindow(QtGui.QDialog):
         self.config_path = path
 
         # set window properties
-        self.resize(550, 600)
+        self.resize(560, 680)
         self.setMinimumSize(320, 400)
         self.setWindowTitle('DocGen - Settings')
 
+        # create LineEdit for keybinding
+        self.keybinding_l = QtGui.QLabel("Key Binding:")
+        self.keybinding = QtGui.QLineEdit(self)
+
+        # create ComboBox for doctype
+        self.doc_type_l = QtGui.QLabel("Documentaion Type:")
+        self.doc_type = QtGui.QComboBox(self)
+
+        # create TabWidget for different doc types
+        self.tab = QtGui.QTabWidget(self)
+
         # create TextEdits for each template
+        sections = [sec for sec in self.config.sections() if sec != 'general']
+
+        self.edits = {}
+        for sec in sections:
+            self.edits[sec] = TemplateEdit() # own class - see below
+            self.tab.addTab(self.edits[sec], sec.capitalize())
+
+        # button to write config to file
+        self.but_save = QtGui.QPushButton('Save', self)
+
+        def but_save_slot():
+            self._write_config()
+            self.hide()
+
+        self.but_save.clicked.connect(but_save_slot)
+
+        # create layout
+        grid = QtGui.QGridLayout(self)
+
+        grid.addWidget(self.keybinding_l, 0, 0)
+        grid.addWidget(self.keybinding,   0, 1)
+        grid.addWidget(self.doc_type_l,   1, 0)
+        grid.addWidget(self.doc_type,     1, 1)
+        grid.addWidget(self.tab,          2, 0, 1, 2)
+        grid.addWidget(self.but_save,     3, 0, 1, 2)
+
+        self.setLayout(grid)
+
+        # read current config
+        self.keybinding.setText(config.get('general', 'keybinding'))
+
+        for i, sec in enumerate(sections):
+            self.doc_type.addItem(sec.capitalize())
+            if sec == self.config.get('general', 'doc_type'):
+                self.doc_type.setCurrentIndex(i)
+                self.tab.setCurrentIndex(i)
+
+            self.tab.addTab(None, sec)
+
+        for sec, edit in self.edits.items():
+            edit.mod.setText(config.get(sec, 'mod').replace('\n.\n', '\n\n'))
+            edit.cls.setText(config.get(sec, 'cls').replace('\n.\n', '\n\n'))
+            edit.fnc.setText(config.get(sec, 'fnc').replace('\n.\n', '\n\n'))
+
+    def _write_config(self):
+        # set global config to new values
+        self.config.set('general', 'keybinding',
+            self.keybinding.text())
+
+        self.config.set('general', 'doc_type',
+            self.doc_type.currentText().lower())
+
+        for sec, edit in self.edits.items():
+            self.config.set(sec, 'mod',
+                edit.mod.toPlainText().replace('\n\n', '\n.\n'))
+            self.config.set(sec, 'cls',
+                edit.cls.toPlainText().replace('\n\n', '\n.\n'))
+            self.config.set(sec, 'fnc',
+                edit.fnc.toPlainText().replace('\n\n', '\n.\n'))
+
+        # write new config to file
+        with open(self.config_path, 'w') as config_file:
+            self.config.write(config_file)
+
+
+class TemplateEdit(QtGui.QWidget):
+    def __init__(self):
+        super(TemplateEdit, self).__init__()
+
         self.mod_l = QtGui.QLabel("Module Template:")
         self.mod = QtGui.QTextEdit(self)
         self.mod.setLineWrapMode(QtGui.QTextEdit.NoWrap)
@@ -236,16 +330,6 @@ class SettingsWindow(QtGui.QDialog):
         self.fnc = QtGui.QTextEdit(self)
         self.fnc.setLineWrapMode(QtGui.QTextEdit.NoWrap)
 
-        # button to write config to file
-        self.but_save = QtGui.QPushButton('Save', self)
-
-        def but_save_slot():
-            self._write_config()
-            self.hide()
-
-        self.but_save.clicked.connect(but_save_slot)
-
-        # create layout
         vbox = QtGui.QVBoxLayout(self)
 
         vbox.addWidget(self.mod_l)
@@ -254,26 +338,8 @@ class SettingsWindow(QtGui.QDialog):
         vbox.addWidget(self.cls)
         vbox.addWidget(self.fnc_l)
         vbox.addWidget(self.fnc)
-        vbox.addWidget(self.but_save)
 
         self.setLayout(vbox)
-
-        # read current config
-        self.mod.setText(config.get('sphinx', 'mod').replace('\n.\n', '\n\n'))
-        self.cls.setText(config.get('sphinx', 'cls').replace('\n.\n', '\n\n'))
-        self.fnc.setText(config.get('sphinx', 'fnc').replace('\n.\n', '\n\n'))
-
-    def _write_config(self):
-        # set global config to new values
-        self.config.set('sphinx', 'mod',
-            self.mod.toPlainText().replace('\n\n', '\n.\n'))
-        self.config.set('sphinx', 'cls',
-            self.cls.toPlainText().replace('\n\n', '\n.\n'))
-        self.config.set('sphinx', 'fnc',
-            self.fnc.toPlainText().replace('\n\n', '\n.\n'))
-
-        # write new config to file
-        self.config.write(open(self.config_path, 'w'))
 
 
 class DocGenHandler(plugin_interfaces.IProjectTypeHandler):
