@@ -34,17 +34,13 @@ class Docstring(list):
     def append_newline(self):
         super(Docstring, self).append('\n')
 
-    def indent(self):
-        self.prefix += " " * 4
-
-    def unindent(self):
-        self.prefix = self.prefix[4:]
-
     def __str__(self):
         return "{0}\n{1}{0}".format(self._default_indent + "'''", "".join(self))
 
 #TODO: make config stuff more error safe (e.g. text with '\\n')
 #TODO: independence from Sphinx
+#TODO: allow configuration of config file path and key binding
+#TODO: allow to have several sections in the config
 class DocGen(plugin.Plugin):
     def initialize(self):
         global PROJECT_TYPE
