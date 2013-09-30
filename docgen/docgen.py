@@ -1,8 +1,6 @@
 # -*- coding: UTF-8 -*-
 
 import os
-import re
-import ast
 import ConfigParser
 try:
     import json
@@ -20,9 +18,12 @@ from ninja_ide.tools import json_manager
 from menu import Menu
 from wizard import PagePluginProperties
 
+from tokenize_util import token_def, token_args
+
 PROJECT_TYPE = "NINJA-Plugin-Project"
 
 class Docstring(list):
+    'Subclass of list which makes handling the docstring easier.'
     def __init__(self, indent=0):
         super(Docstring, self).__init__()
         self.prefix = " " * indent
@@ -49,7 +50,7 @@ class DocGen(plugin.Plugin):
         self.explorer_s.set_project_type_handler(PROJECT_TYPE,
                 DocGenHandler(self.locator))
 
-        # get settings from file
+        # get settings from config file
         self.config = None
         self.config_path = None
         self.doc_type = None
@@ -69,80 +70,60 @@ class DocGen(plugin.Plugin):
         gen_doc.triggered.connect(self.generate_doc)
         gen_doc.setShortcut(QtGui.QKeySequence(self.keybinding))
 
-        #menu.addAction(action)
-
         self.menu_s.add_action(gen_doc)
         self.menu_s.add_action(settings)
 
     def generate_doc(self):
-        # make sure we have current config
+        '''
+        Main function. Tries to find either an empty line, class or function
+        definition, generates the docstring and inserts it.
+        '''
+        # make sure config is up to date
         self._update_config()
 
+        # get the editor and its content
         editor = self.editor_s.get_editor()
         text = editor.get_text()
 
-        # get indices for current line
+        # get start index for current line
         pos = editor.get_cursor_position()
-        start = text[:pos].rfind('\n') + 1
-        end = text[start:].find('\n') + start
+        start = text[:pos].rfind('\n') + 1 #TODO: is this reliable?
 
-        # create regex and its helper
-        regex = (r'\s*KEYWORD\s+\w+\(.*?\)\s*:',
-                 r'\s*KEYWORD\s+\w+\(.*?\)\s*:\s*#docgen-end')
+        # get definition type and index for end of definition
+        keyword_to_type = {'def': 'fnc', 'class': 'cls', '': 'mod'}
 
-        cls_regex = [r.replace('KEYWORD', 'class') for r in regex]
-        fnc_regex = [r.replace('KEYWORD', 'def') for r in regex]
+        def_type, index = token_def(text[start:])
 
-        def match(regex, text):
-            r = re.match(regex, text, re.DOTALL)
-            return r.group() if r else ''
-
-        # try to find out what kind of docstring the user wants
-        fnc_header = match(fnc_regex[0], text[start:])
-        cls_header = match(cls_regex[0], text[start:])
-
+        def_type = keyword_to_type[def_type]
+        end = start + index
 
         # create a call-table which contains the markup specific functions
         # more to come! (hopefully)
         call = {
-            'custom': { 'fnc': lambda header: self._general_doc('fnc', header),
-                        'cls': lambda header: self._general_doc('cls', header),
+            'custom': { 'fnc': lambda: self._general_doc('fnc', text[start:end]),
+                        'cls': lambda: self._general_doc('cls', text[start:end]),
                         'mod': lambda: self._general_doc('mod', None) },
 
-            'sphinx': { 'fnc': self._sphinx_function,
-                        'cls': lambda header: self._general_doc('cls', header),
+            'sphinx': { 'fnc': lambda: self._sphinx_function(text[start:end]),
+                        'cls': lambda: self._general_doc('cls', text[start:end]),
                         'mod': lambda: self._general_doc('mod', None) }
             }
 
-        if start == end: # empty line - assume module doc
-            doc = call[self.doc_type]['mod']()
-        elif fnc_header:
-            try:
-                doc = call[self.doc_type]['fnc'](fnc_header)
-            except SyntaxError: # header might contain "):" - try second regex
-                fnc_header = match(fnc_regex[1], text[start:])
-                doc = call[self.doc_type]['fnc'](fnc_header) if fnc_header else None
-        elif cls_header:
-            try:
-                doc = call[self.doc_type]['cls'](cls_header)
-            except SyntaxError:
-                cls_header = match(cls_regex[1], text[start:])
-                doc = call[self.doc_type]['cls'](cls_header) if cls_header else None
-        else:
-            return # do nothing
+        doc = call[self.doc_type][def_type]()
 
-        if doc:
-            end = start + len(fnc_header) + len(cls_header) if start != end else end
+        if doc and start <= end:
             editor.set_cursor_position(end) # set cursor to end of line
             self.editor_s.insert_text('\n' + str(doc))
 
     def _general_doc(self, header_type, header):
+        '''
+        Gets a the type of definition (mod, cls or fnc) and the current line.
+        Returns a Docstring object containing the configured lines.
+        '''
         keyword = { 'cls': 'class',
                     'fnc': 'def' }
 
         if header:
-            # verify what we consider the header
-            ast.parse(header.strip() + '\n    pass')
             doc = Docstring(indent=header.find(keyword[header_type]) + 4)
         else:
             doc = Docstring()
@@ -154,9 +135,9 @@ class DocGen(plugin.Plugin):
         return doc
 
     def _sphinx_function(self, header):
-        # remove indenation and add 'pass' to make 'def <name>(<...>):'
-        # a valid Python expression for the syntax parser
-        args = ast.parse(header.strip() + '\n    pass').body[0].args.args
+        'Applies special DocGen directives for Sphinx markup to functions.'
+        # get arguments from syntax parser - the only reliable way to do it
+        args = token_args(header)
 
         doc = Docstring(indent=header.find('def') + 4)
 
@@ -166,8 +147,7 @@ class DocGen(plugin.Plugin):
             elif ':params:' in line:
                 types = ':types:' in line
 
-                # args is a list of _ast.Name objects)
-                for arg in (a.id for a in args):
+                for arg in args:
                     if arg == 'self': continue
                     doc.append(':param %s: ' % arg)
                     if types: doc.append(':type %s: ' % arg)
@@ -177,11 +157,16 @@ class DocGen(plugin.Plugin):
         return doc
 
     def _get_config(self, path='~/.ninja_ide/addins/plugins/docgen/config'):
+        '''
+        Reads current config or creates default config if none is found.
+        Returns the ConfigParser object and the path to the config file.
+        '''
         path = os.path.expanduser(path)
         config = ConfigParser.ConfigParser()
         config_file = None
 
         if not os.path.isfile(path):
+            # no config file yet, create one with default values
             config_file = open(path, 'w')
 
             config.add_section('general')
@@ -211,7 +196,7 @@ class DocGen(plugin.Plugin):
             ':raise:')
 
             config.write(config_file)
-        else:
+        else: # config file found - read it
             config_file = open(path, 'r')
             config.readfp(config_file)
 
@@ -219,6 +204,7 @@ class DocGen(plugin.Plugin):
         return config, path
 
     def _update_config(self):
+        'Helper function to read/update config.'
         self.config, self.config_path = self._get_config()
         self.doc_type = self.config.get('general', 'doc_type')
         self.keybinding = self.config.get('general', 'keybinding')
@@ -318,6 +304,7 @@ class TemplateEdit(QtGui.QWidget):
     def __init__(self):
         super(TemplateEdit, self).__init__()
 
+        # create TextEdits for each template
         self.mod_l = QtGui.QLabel("Module Template:")
         self.mod = QtGui.QTextEdit(self)
         self.mod.setLineWrapMode(QtGui.QTextEdit.NoWrap)
@@ -330,6 +317,7 @@ class TemplateEdit(QtGui.QWidget):
         self.fnc = QtGui.QTextEdit(self)
         self.fnc.setLineWrapMode(QtGui.QTextEdit.NoWrap)
 
+        # create layout and add TextEdits
         vbox = QtGui.QVBoxLayout(self)
 
         vbox.addWidget(self.mod_l)
