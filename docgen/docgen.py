@@ -58,7 +58,6 @@ class DocGen(plugin.Plugin):
         self._update_config()
 
         # create settings window
-        #FIXME: give ide window as parent
         self.settings_win = SettingsWindow(None, self.config, self.config_path)
 
         # add menu entries
