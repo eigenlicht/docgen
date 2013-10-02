@@ -18,5 +18,6 @@ Known Issues
 
 * Identing the template string in the config is not possible (ConfigParser just ignores them...)
 * Very errornous code can not be parsed, e.g.:
+
     def f(a,b # generating docstring for this won't work correctly
     def g(a,b): pass
