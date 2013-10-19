@@ -1,7 +1,7 @@
 # -*- coding: UTF-8 -*-
 
 import os
-import ConfigParser
+import pickle
 try:
     import json
 except ImportError:
@@ -35,7 +35,7 @@ class Docstring(list):
         super(Docstring, self).append('\n')
 
     def __str__(self):
-        return "{0}\n{1}{0}".format(self.prefix + "'''", "".join(self))
+        return u"{0}\n{1}{0}".format(self.prefix + "'''", "".join(self))
 
 #TODO: make config stuff more error safe (e.g. text with '\\n', keybinding)
 #TODO: allow user to create several templates with certain type (e.g. sphinx)
@@ -112,7 +112,7 @@ class DocGen(plugin.Plugin):
 
         if doc and start <= end:
             editor.set_cursor_position(end) # set cursor to end of line
-            self.editor_s.insert_text('\n' + str(doc))
+            self.editor_s.insert_text('\n' + unicode(doc))
 
     def _general_doc(self, header_type, header):
         '''
@@ -127,9 +127,8 @@ class DocGen(plugin.Plugin):
         else:
             doc = Docstring()
 
-        for line in self.config.get(self.doc_type, header_type).split('\n'):
-            if line == '.': doc.append_newline()
-            else: doc.append(line)
+        for line in self.config[self.doc_type][header_type].split('\n'):
+            doc.append(line)
 
         return doc
 
@@ -140,16 +139,15 @@ class DocGen(plugin.Plugin):
 
         doc = Docstring(indent=header.find('def') + 4)
 
-        for line in self.config.get('sphinx', 'fnc').split('\n'):
-            if line == '.':
-                doc.append_newline()
-            elif ':params:' in line:
+        for line in self.config['sphinx']['fnc'].split('\n'):
+            if ':params:' in line:
+                indent = " " * line.find(':params:')
                 types = ':types:' in line
 
                 for arg in args:
                     if arg == 'self': continue
-                    doc.append(':param %s: ' % arg)
-                    if types: doc.append(':type %s: ' % arg)
+                    doc.append(indent + ':param %s: ' % arg)
+                    if types: doc.append(indent + ':type %s: ' % arg)
             else:
                 doc.append(line)
 
@@ -161,43 +159,33 @@ class DocGen(plugin.Plugin):
         Returns the ConfigParser object and the path to the config file.
         '''
         path = os.path.expanduser(path)
-        config = ConfigParser.ConfigParser()
         config_file = None
 
         if not os.path.isfile(path):
             # no config file yet, create one with default values
             config_file = open(path, 'w')
+            config = {}
 
-            config.add_section('general')
-            config.set('general', 'doc_type', 'sphinx')
-            config.set('general', 'keybinding', 'F8')
+            config['general'] = { 'doc_type': 'sphinx',
+                                  'keybinding': 'F8' }
 
-            config.add_section('custom')
-            config.set('custom', 'mod', '')
-            config.set('custom', 'cls', '')
-            config.set('custom', 'fnc', '')
+            config['custom'] = { 'mod': '', 'cls': '', 'fnc': '' }
 
-            config.add_section('sphinx')
-            #FIXME: ugly hack: usage of '.' for empty lines
-            #FIXME: otherwhise configparser ignores them
-            config.set('sphinx', 'mod',
-            'Created on <date>\n.\n' +
-            '.. moduleauthor:: Firstname Lastname <firstname@example.com>\n.\n' +
-            ':synopsis:')
+            config['sphinx'] = {
+                'mod': ('Created on <date>\n\n' +
+                        '.. moduleauthor:: Firstname Lastname <firstname@example.com>\n\n' +
+                        ':synopsis:'),
+                'cls': '.. codeauthor:: Firstname Lastname <firstname@example.com>',
+                'fnc': ('.. codeauthor:: Firstname Lastname <firstname@example.com>\n\n' +
+                        ':params: :types:\n\n' +
+                        ':returns: \n\n' +
+                        ':raise: ')
+            }
 
-            config.set('sphinx', 'cls',
-                '.. codeauthor:: Firstname Lastname <firstname@example.com>')
-
-            config.set('sphinx', 'fnc',
-            '.. codeauthor:: Firstname Lastname <firstname@example.com>\n.\n' +
-            ':params: :types:\n.\n' +
-            ':returns:\n.\n' +
-            ':raise:')
-
-            config.write(config_file)
+            pickle.dump(config, config_file)
         else: # config file found - read it
             config_file = open(path, 'r')
-            config.readfp(config_file)
+            config = pickle.load(config_file)
 
         config_file.close()
         return config, path
@@ -205,8 +193,8 @@ class DocGen(plugin.Plugin):
     def _update_config(self):
         'Helper function to read/update config.'
         self.config, self.config_path = self._get_config()
-        self.doc_type = self.config.get('general', 'doc_type')
-        self.keybinding = self.config.get('general', 'keybinding')
+        self.doc_type = self.config['general']['doc_type']
+        self.keybinding = self.config['general']['keybinding']
 
 
 class SettingsWindow(QtGui.QDialog):
@@ -234,7 +222,7 @@ class SettingsWindow(QtGui.QDialog):
         self.tab = QtGui.QTabWidget(self)
 
         # create TextEdits for each template
-        sections = [sec for sec in self.config.sections() if sec != 'general']
+        sections = [sec for sec in self.config if sec != 'general']
 
         self.edits = {}
         for sec in sections:
@@ -263,40 +251,35 @@ class SettingsWindow(QtGui.QDialog):
         self.setLayout(grid)
 
         # read current config
-        self.keybinding.setText(config.get('general', 'keybinding'))
+        self.keybinding.setText(self.config['general']['keybinding'])
 
         for i, sec in enumerate(sections):
             self.doc_type.addItem(sec.capitalize())
-            if sec == self.config.get('general', 'doc_type'):
+            if sec == self.config['general']['doc_type']:
                 self.doc_type.setCurrentIndex(i)
                 self.tab.setCurrentIndex(i)
 
             self.tab.addTab(None, sec)
 
         for sec, edit in self.edits.items():
-            edit.mod.setText(config.get(sec, 'mod').replace('\n.\n', '\n\n'))
-            edit.cls.setText(config.get(sec, 'cls').replace('\n.\n', '\n\n'))
-            edit.fnc.setText(config.get(sec, 'fnc').replace('\n.\n', '\n\n'))
+            edit.mod.setText(self.config[sec]['mod'])
+            edit.cls.setText(self.config[sec]['cls'])
+            edit.fnc.setText(self.config[sec]['fnc'])
 
     def _write_config(self):
         # set global config to new values
-        self.config.set('general', 'keybinding',
-            self.keybinding.text())
+        self.config['general']['keybinding'] = self.keybinding.text()
 
-        self.config.set('general', 'doc_type',
-            self.doc_type.currentText().lower())
+        self.config['general']['doc_type'] = self.doc_type.currentText().lower()
 
         for sec, edit in self.edits.items():
-            self.config.set(sec, 'mod',
-                edit.mod.toPlainText().replace('\n\n', '\n.\n'))
-            self.config.set(sec, 'cls',
-                edit.cls.toPlainText().replace('\n\n', '\n.\n'))
-            self.config.set(sec, 'fnc',
-                edit.fnc.toPlainText().replace('\n\n', '\n.\n'))
+            self.config[sec]['mod'] = edit.mod.toPlainText()
+            self.config[sec]['cls'] = edit.cls.toPlainText()
+            self.config[sec]['fnc'] = edit.fnc.toPlainText()
 
         # write new config to file
         with open(self.config_path, 'w') as config_file:
-            self.config.write(config_file)
+            pickle.dump(self.config, config_file)
 
 
 class TemplateEdit(QtGui.QWidget):
