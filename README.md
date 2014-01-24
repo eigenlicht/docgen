@@ -6,11 +6,13 @@ NINJA IDE Plugin to generate docstring templates.
 Configuring DocGen
 ------------------
 
-Create your own docstring templates in the settings, which you can find in the menubar at the top under Addins -> DocGen Settings. The default key binding for generating is F8.
+Create your own docstring templates in the settings, which you can find in the menubar at the top under Addins -> DocGen Settings. The default key binding for generating docstrings is F8.
+
 To generate...
-* a function docstring, place your cursor in the line of the function header (i.e. the line with the 'def'-keyword, the function name, arguments, etc.).
-* a class docstring, place your cursor in the line of the class header (i.e. the line with the 'class'-keyword, etc.).
-* a module docstring, place your cursor in an empty line.
+* a function docstring, place your cursor in the line of the function header (i.e. the line with the 'def'-keyword, the function name, arguments, etc.)
+* a class docstring, place your cursor in the line of the class header (i.e. the line with the 'class'-keyword, etc.)
+* a module docstring, place your cursor in an empty line
+and press the key you assigned to docstring generation or click on Addins -> Generate Docstring.
 
 The DocGen special directives are:
 
