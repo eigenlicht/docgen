@@ -54,3 +54,15 @@ Known Issues
 
         def f(a,b # generating docstring for this won't work correctly
         def g(a,b): pass
+
+Changelog
+---------
+
+### 0.2 ###
+
+* Fixed unicode issues (you now can have ö, ü, ä, etc. in your templates)
+* Fixed keyword argument issues (e.g. for 'def f(a, b=(c, d))')
+
+### 0.1 ###
+
+* Initial version
